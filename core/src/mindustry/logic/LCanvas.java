@@ -21,6 +21,7 @@ import mindustry.ui.*;
 
 public class LCanvas extends Table{
     public static final int maxJumpsDrawn = 100;
+    public static final int invalidJump = 0x7fffffff; // terrible hack
     //ew static variables
     static LCanvas canvas;
 
@@ -258,11 +259,69 @@ public class LCanvas extends Table{
                 }
             }
 
+            setJumpHeights();
+
             invalidateHierarchy();
 
             if(parent != null && parent instanceof Table){
                 setCullingArea(parent.getCullingArea());
             }
+        }
+
+        private void setJumpHeights(){
+            SnapshotSeq<Element> jumpsChildren = jumps.getChildren();
+            jumpsChildren.each(e -> {
+                if(e instanceof JumpCurve e2){
+                    e2.prepareHeight();
+                }
+            });
+            // `JumpCurve`s get priority
+            jumpsChildren.sort((a, b) -> (a instanceof JumpCurve ja ? ja.jumpBegin : invalidJump)
+                                         - (b instanceof JumpCurve jb ? jb.jumpBegin : invalidJump));
+
+            Seq<JumpCurve> occupiers = new Seq<JumpCurve>();
+            Bits occupied = new Bits();
+            for(int i = 0; i < jumpsChildren.size; i++){
+                if(!(jumpsChildren.get(i) instanceof JumpCurve cur) || cur.jumpBegin == invalidJump) break;
+                occupiers.retainAll(e -> {
+                    if(e.jumpEnd > cur.jumpBegin) return true;
+                    occupied.clear(e.height);
+                    return false;
+                });
+                int h = getJumpHeight(jumpsChildren, i, occupiers, occupied);
+                occupiers.add(cur);
+                occupied.set(h);
+            }
+        }
+
+        private int getJumpHeight(SnapshotSeq<Element> jumps, int index, Seq<JumpCurve> occupiers, Bits occupied){
+            if(!(jumps.get(index) instanceof JumpCurve jmp)) return -1;
+            if(jmp.markedDone) return jmp.height;
+
+            // TODO: optimize for LESS cloning
+            Seq<JumpCurve> tmpOccupiers = new Seq<JumpCurve>(occupiers);
+            Bits tmpOccupied = new Bits();
+            tmpOccupied.set(occupied);
+
+            int max = -1;
+            for(int i = index + 1; i < jumps.size; i++){
+                if(!(jumps.get(i) instanceof JumpCurve cur) || cur.jumpBegin == invalidJump) break;
+                if(cur.jumpEnd > jmp.jumpEnd) continue;
+                tmpOccupiers.retainAll(e -> {
+                    if(e.jumpEnd > cur.jumpBegin) return true;
+                    tmpOccupied.clear(e.height);
+                    return false;
+                });
+                int h = getJumpHeight(jumps, i, tmpOccupiers, tmpOccupied);
+                tmpOccupiers.add(cur);
+                tmpOccupied.set(h);
+                max = Math.max(max, h);
+            }
+
+            jmp.height = occupied.nextClearBit(max + 1);
+            jmp.markedDone = true;
+
+            return jmp.height;
         }
 
         @Override
@@ -459,12 +518,14 @@ public class LCanvas extends Table{
         ClickListener listener;
 
         public JumpCurve curve;
+        public StatementElem elem;
 
-        public JumpButton(Prov<StatementElem> getter, Cons<StatementElem> setter){
+        public JumpButton(Prov<StatementElem> getter, Cons<StatementElem> setter, StatementElem elem){
             super(Tex.logicNode, new ImageButtonStyle(){{
                 imageUpColor = Color.white;
             }});
 
+            this.elem = elem;
             to = getter;
             addListener(listener = new ClickListener());
 
@@ -525,6 +586,11 @@ public class LCanvas extends Table{
     public static class JumpCurve extends Element{
         public JumpButton button;
 
+        // for jump prediction; see DragLayout
+        public int height = 0;
+        public boolean markedDone = false;
+        public int jumpBegin = 0, jumpEnd = 0;
+
         public JumpCurve(JumpButton button){
             this.button = button;
         }
@@ -582,7 +648,7 @@ public class LCanvas extends Table{
             Lines.stroke(4f, button.color);
             Draw.alpha(parentAlpha);
 
-            float dist = 100f;
+            float dist = 100f + 100f * (float) height;
 
             //square jumps
             if(false){
@@ -605,6 +671,21 @@ public class LCanvas extends Table{
             x2 + dist, y2,
             x2, y2,
             Math.max(18, (int)(Mathf.dst(x, y, x2, y2) / 6)));
+        }
+
+        public void prepareHeight(){
+            if(this.button.to.get() == null){
+                this.markedDone = true;
+                this.height = 0;
+                this.jumpBegin = this.jumpEnd = invalidJump;
+            } else {
+                this.markedDone = false;
+                int i = this.button.elem.index;
+                int j = this.button.to.get().index;
+                this.jumpBegin = Math.min(i,j);
+                this.jumpEnd = Math.max(i,j);
+                // height will be recalculated later
+            }
         }
     }
 }
