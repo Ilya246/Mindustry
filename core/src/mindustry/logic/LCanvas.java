@@ -13,6 +13,7 @@ import arc.scene.ui.*;
 import arc.scene.ui.layout.*;
 import arc.struct.*;
 import arc.util.*;
+import arc.util.pooling.*;
 import mindustry.*;
 import mindustry.gen.*;
 import mindustry.graphics.*;
@@ -279,8 +280,10 @@ public class LCanvas extends Table{
             jumpsChildren.sort((a, b) -> (a instanceof JumpCurve ja ? ja.jumpBegin : invalidJump)
                                          - (b instanceof JumpCurve jb ? jb.jumpBegin : invalidJump));
 
-            Seq<JumpCurve> occupiers = new Seq<JumpCurve>();
-            Bits occupied = new Bits();
+            Seq<JumpCurve> occupiers = Pools.obtain(Seq.class, Seq<JumpCurve>::new);
+            Bits occupied = Pools.obtain(Bits.class, Bits::new);
+            occupiers.clear();
+            occupied.clear();
             for(int i = 0; i < jumpsChildren.size; i++){
                 if(!(jumpsChildren.get(i) instanceof JumpCurve cur) || cur.jumpBegin == invalidJump) break;
                 occupiers.retainAll(e -> {
@@ -292,15 +295,21 @@ public class LCanvas extends Table{
                 occupiers.add(cur);
                 occupied.set(h);
             }
+
+            occupied.clear();
+            occupiers.clear();
+            Pools.free(occupied);
+            Pools.free(occupiers);
         }
 
         private int getJumpHeight(SnapshotSeq<Element> jumps, int index, Seq<JumpCurve> occupiers, Bits occupied){
             if(!(jumps.get(index) instanceof JumpCurve jmp)) return -1;
             if(jmp.markedDone) return jmp.height;
 
-            // TODO: optimize for LESS cloning
-            Seq<JumpCurve> tmpOccupiers = new Seq<JumpCurve>(occupiers);
-            Bits tmpOccupied = new Bits();
+            Seq<JumpCurve> tmpOccupiers = Pools.obtain(Seq.class, Seq<JumpCurve>::new).clear();
+            Bits tmpOccupied = Pools.obtain(Bits.class, Bits::new);
+            tmpOccupiers.set(occupiers);
+            tmpOccupied.clear();
             tmpOccupied.set(occupied);
 
             int max = -1;
@@ -320,6 +329,11 @@ public class LCanvas extends Table{
 
             jmp.height = occupied.nextClearBit(max + 1);
             jmp.markedDone = true;
+
+            tmpOccupied.clear();
+            tmpOccupiers.clear();
+            Pools.free(tmpOccupied);
+            Pools.free(tmpOccupiers);
 
             return jmp.height;
         }
