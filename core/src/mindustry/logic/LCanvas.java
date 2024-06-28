@@ -207,6 +207,7 @@ public class LCanvas extends Table{
         boolean invalidated;
         public Group jumps = new WidgetGroup();
         public boolean updateJumpHeights = true;
+        private Rand rand = new Rand();
 
         {
             setTransform(true);
@@ -264,6 +265,14 @@ public class LCanvas extends Table{
 
             if(updateJumpHeights) setJumpHeights();
             updateJumpHeights = false;
+
+            jumps.getChildren().each(e -> {
+                if(!(e instanceof JumpCurve e2) || e2.button.to.get() == null) return;
+                int idx = e2.button.to.get().index;
+                if(dragging != null && idx >= dragging.index) idx += 1;
+                rand.setSeed((long) idx);
+                Color.HSVtoRGB(rand.random(0.0f, 360.0f), rand.random(80.0f, 90.0f), 100.0f, e2.button.defaultColor);
+            });
 
             invalidateHierarchy();
 
@@ -532,7 +541,7 @@ public class LCanvas extends Table{
 
     public static class JumpButton extends ImageButton{
         Color hoverColor = Pal.place;
-        Color defaultColor = Color.white;
+        Color defaultColor = new Color(Color.white);
         Prov<StatementElem> to;
         boolean selecting;
         float mx, my;
@@ -672,6 +681,7 @@ public class LCanvas extends Table{
         public void drawCurve(float x, float y, float x2, float y2){
             Lines.stroke(4f, button.color);
             Draw.alpha(parentAlpha);
+            Draw.color(button.color);
 
             // exponential smoothing
             uiHeight = Mathf.lerp(100f + 100f * (float) height, uiHeight, Mathf.pow(0.9f, Time.delta));
@@ -697,6 +707,7 @@ public class LCanvas extends Table{
             x2 + uiHeight, y2,
             x2, y2,
             Math.max(18, (int)(Mathf.dst(x, y, x2, y2) / 6)));
+            Draw.reset();
         }
 
         public void prepareHeight(){
