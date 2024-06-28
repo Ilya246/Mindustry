@@ -614,6 +614,8 @@ public class LCanvas extends Table{
         public boolean markedDone = false;
         public int jumpBegin = 0, jumpEnd = 0;
 
+        private float uiHeight = 100f;
+
         public JumpCurve(JumpButton button){
             this.button = button;
         }
@@ -671,7 +673,8 @@ public class LCanvas extends Table{
             Lines.stroke(4f, button.color);
             Draw.alpha(parentAlpha);
 
-            float dist = 100f + 100f * (float) height;
+            // exponential smoothing
+            uiHeight = Mathf.lerp(100f + 100f * (float) height, uiHeight, Mathf.pow(0.9f, Time.delta));
 
             //square jumps
             if(false){
@@ -690,8 +693,8 @@ public class LCanvas extends Table{
 
             Lines.curve(
             x, y,
-            x + dist, y,
-            x2 + dist, y2,
+            x + uiHeight, y,
+            x2 + uiHeight, y2,
             x2, y2,
             Math.max(18, (int)(Mathf.dst(x, y, x2, y2) / 6)));
         }
