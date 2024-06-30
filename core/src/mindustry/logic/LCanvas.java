@@ -21,7 +21,6 @@ import mindustry.logic.LStatements.*;
 import mindustry.ui.*;
 
 public class LCanvas extends Table{
-    public static final int maxJumpsDrawn = 100;
     private static final int invalidJump = Integer.MAX_VALUE; // terrible hack
     //ew static variables
     static LCanvas canvas;
@@ -33,7 +32,6 @@ public class LCanvas extends Table{
     StatementElem dragging;
     StatementElem hovered;
     float targetWidth;
-    int jumpCount = 0;
     boolean privileged;
     Seq<Tooltip> tooltips = new Seq<>();
 
@@ -134,7 +132,6 @@ public class LCanvas extends Table{
 
     @Override
     public void draw(){
-        jumpCount = 0;
         super.draw();
     }
 
@@ -207,6 +204,8 @@ public class LCanvas extends Table{
         boolean invalidated;
         public Group jumps = new WidgetGroup();
         private Seq<JumpCurve> processedJumps = new Seq<JumpCurve>();
+        private IntMap<JumpCurve> reprBefore = new IntMap<JumpCurve>();
+        private IntMap<JumpCurve> reprAfter = new IntMap<JumpCurve>();
         public boolean updateJumpHeights = true;
 
         {
@@ -276,14 +275,24 @@ public class LCanvas extends Table{
         private void setJumpHeights(){
             SnapshotSeq<Element> jumpsChildren = jumps.getChildren();
             processedJumps.clear();
+            reprBefore.clear();
+            reprAfter.clear();
             jumpsChildren.each(e -> {
-                if(e instanceof JumpCurve e2){
-                    e2.prepareHeight();
-                    if(e2.jumpUIBegin != invalidJump){
-                        processedJumps.add(e2);
-                    }
+                if(!(e instanceof JumpCurve e2)) return;
+                e2.prepareHeight();
+                if(e2.jumpUIBegin == invalidJump) return;
+                if(e2.flipped){
+                    JumpCurve prev = reprAfter.get(e2.jumpUIBegin);
+                    if(prev != null && prev.jumpUIEnd >= e2.jumpUIEnd) return;
+                    reprAfter.put(e2.jumpUIBegin, e2);
+                }else{
+                    JumpCurve prev = reprBefore.get(e2.jumpUIEnd);
+                    if(prev != null && prev.jumpUIBegin <= e2.jumpUIBegin) return;
+                    reprBefore.put(e2.jumpUIEnd, e2);
                 }
             });
+            processedJumps.add(reprBefore.values().toArray());
+            processedJumps.add(reprAfter.values().toArray());
             processedJumps.sort((a,b) -> a.jumpUIBegin - b.jumpUIBegin);
 
             Seq<JumpCurve> occupiers = Pools.obtain(Seq.class, Seq<JumpCurve>::new);
@@ -306,6 +315,13 @@ public class LCanvas extends Table{
             occupiers.clear();
             Pools.free(occupied);
             Pools.free(occupiers);
+
+            jumpsChildren.each(e -> {
+                if(!(e instanceof JumpCurve e2)) return;
+                if(e2.jumpUIBegin == invalidJump) return;
+                e2.height = e2.flipped ? reprAfter.get(e2.jumpUIBegin).height : reprBefore.get(e2.jumpUIEnd).height;
+                e2.markedDone = true;
+            });
         }
 
         private int getJumpHeight(int index, Seq<JumpCurve> occupiers, Bits occupied){
@@ -616,8 +632,9 @@ public class LCanvas extends Table{
         public int height = 0;
         public boolean markedDone = false;
         public int jumpUIBegin = 0, jumpUIEnd = 0;
+        public boolean flipped = false;
 
-        private float uiHeight = 100f;
+        private float uiHeight = 60f;
 
         public JumpCurve(JumpButton button){
             this.button = button;
@@ -634,12 +651,6 @@ public class LCanvas extends Table{
 
         @Override
         public void draw(){
-            canvas.jumpCount ++;
-
-            if(canvas.jumpCount > maxJumpsDrawn && !button.selecting && !button.listener.isOver()){
-                return;
-            }
-
             Element hover = button.to.get() == null && button.selecting ? canvas.hovered : button.to.get();
             boolean draw = false;
             Vec2 t = Tmp.v1, r = Tmp.v2;
@@ -677,18 +688,15 @@ public class LCanvas extends Table{
             Draw.alpha(parentAlpha);
 
             // exponential smoothing
-            uiHeight = Mathf.lerp(100f + 100f * (float) height, uiHeight, Mathf.pow(0.9f, Time.delta));
+            uiHeight = Mathf.lerp(60f + 20f * (float) height, uiHeight, Mathf.pow(0.9f, Time.delta));
 
             //square jumps
-            if(false){
-                float len = Scl.scl(Mathf.randomSeed(hashCode(), 10, 50));
-
-                float maxX = Math.max(x, x2) + len;
-
+            if(true){
+                float dy = (y2 == y ? 0f : y2 > y ? 1f : -1f) * uiHeight * 0.5f;
                 Lines.beginLine();
                 Lines.linePoint(x, y);
-                Lines.linePoint(maxX, y);
-                Lines.linePoint(maxX, y2);
+                Lines.linePoint(x + uiHeight, y + dy);
+                Lines.linePoint(x + uiHeight, y2 - dy);
                 Lines.linePoint(x2, y2);
                 Lines.endLine();
                 return;
@@ -706,11 +714,13 @@ public class LCanvas extends Table{
             if(this.button.to.get() == null){
                 this.markedDone = true;
                 this.height = 0;
+                this.flipped = false;
                 this.jumpUIBegin = this.jumpUIEnd = invalidJump;
             } else {
                 this.markedDone = false;
                 int i = this.button.elem.index;
                 int j = this.button.to.get().index;
+                this.flipped = i >= j;
                 this.jumpUIBegin = Math.min(i,j);
                 this.jumpUIEnd = Math.max(i,j);
                 // height will be recalculated later
